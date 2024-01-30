@@ -1,42 +1,153 @@
-const { validationResult } = require("express-validator")
+const fs = require("fs");
+const path = require("path");
+
+const { validationResult } = require("express-validator");
+const { ObjectId } = require("mongodb");
+
+const Post = require("../models/post");
+const { ResultWithContextImpl } = require("express-validator/src/chain");
 
 exports.getPosts = (req, res, next) => {
-  res.status(200).json({
-    posts: [
-      {
-        _id: "1",
-        title: "First Post",
-        content: "This is my first post",
-        imageUrl: "images/1.jpg",
-        creator: {
-          name: "Faiz Khan",
-        },
-        createdAt: new Date(),
-      },
-    ],
-  });
+  Post.find()
+    .then((posts) => {
+      res
+        .status(200)
+        .json({ message: "Feched posts successfully", posts: posts });
+    })
+    .catch((err) => {
+      if (!err.satatusCode) {
+        err.satatusCode = 500;
+      }
+      next(err);
+    });
 };
 
 exports.createPost = (req, res, next) => {
+  const errors = validationResult(req);
+  if (!errors.isEmpty()) {
+    const error = new Error("Validation failed, entered data is incorrect.");
+    error.statusCode = 422;
+    throw error;
+  }
+  console.log(req.file);
+  if (!req.file) {
+    const error = new Error("No image provided.");
+    error.statusCode = 422;
+    throw error;
+  }
+  const imageUrl = req.file.path;
   const title = req.body.title;
   const content = req.body.content;
+  const post = new Post({
+    title: title,
+    content: content,
+    imageUrl: imageUrl,
+    creator: { name: "Faiz Khan" },
+  });
+  post
+    .save()
+    .then((result) => {
+      res.status(201).json({
+        message: "Post created successfully!",
+        post: result,
+      });
+    })
+    .catch((err) => {
+      if (!err.statusCode) {
+        err.statusCode = 500;
+      }
+      next(err);
+    });
+};
 
-  const errors = validationResult(req)
+exports.getPost = (req, res, next) => {
+  const postId = req.params.postId;
 
-  if (!errors.isEmpty()) {
-    return res.status(422).json({ message: "Validation failed, entered data is incorrect.", errors: errors.array() })
+  Post.findById(postId)
+    .then((post) => {
+      if (!post) {
+        const error = new Error("Could not find a find.");
+        error.satatusCode = 404;
+        throw error;
+      }
+      return res.status(200).json({ message: "Post fetched", post: post });
+    })
+    .catch((err) => {
+      if (!err.satatusCode) {
+        err.satatusCode = 500;
+      }
+      next(err);
+    });
+};
+
+exports.updatePost = (req, res, next) => {
+  const postId = req.params.postId;
+  const title = req.body.title;
+  const content = req.body.content;
+  let imageUrl = req.body.image;
+  if (req.file) {
+    imageUrl = req.file.path;
+  }
+  if (!imageUrl) {
+    const error = new Error("No file picekd!");
+    error.statusCode = 422;
+    throw error;
   }
 
-  res.json({
-    message: "Post Created Succefully!",
-    post: {
-      _id: new Date().toISOString(),
-      title: title,
-      content: content,
-      creator: {
-        name: "Prince Khan"
-      },
-      createdAt: new Date()
-    },
-  });
+  Post.findById(postId)
+    .then((post) => {
+      if (!post) {
+        const error = new Error("Could not find a post.");
+        error.satatusCode = 404;
+        throw error;
+      }
+
+      if (imageUrl !== post.imageUrl) {
+        clearImage(post.imageUrl);
+      }
+
+      post.title = title;
+      post.content = content;
+      post.imageUrl = imageUrl;
+      return post.save();
+    })
+    .then((result) => {
+      res.status(200).json({ message: "Post updated!", post: result });
+    })
+    .catch((err) => {
+      if (!err.statusCode) {
+        err.statusCode = 500;
+      }
+      next(err);
+    });
+};
+
+exports.deletePost = (req, res, next) => {
+  const postId = req.params.postId;
+
+  Post.findById(postId)
+    .then((post) => {
+      if (!post) {
+        const error = new Error("Could not find a post.");
+        error.satatusCode = 404;
+        throw error;
+      }
+      clearImage(post.imageUrl);
+      return Post.findByIdAndDelete({ _id: postId });
+    })
+    .then((result) => {
+      console.log(result);
+      res.status(200).json({ message: "Deleted Post." });
+    })
+    .catch((err) => {
+      if (!err.statusCode) {
+        err.statusCode = 500;
+      }
+      next(err);
+    });
+};
+
+const clearImage = (filePath) => {
+  filePath = path.join(__dirname, "..", filePath);
+  fs.unlink(filePath, (err) => console.log(err));
 };
