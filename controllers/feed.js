@@ -2,21 +2,32 @@ const fs = require("fs");
 const path = require("path");
 
 const { validationResult } = require("express-validator");
-const { ObjectId } = require("mongodb");
 
 const Post = require("../models/post");
-const { ResultWithContextImpl } = require("express-validator/src/chain");
+const User = require("../models/user");
 
 exports.getPosts = (req, res, next) => {
+  const currentPage = req.query.page || 1;
+  const perPage = 2;
+  let totalItems;
   Post.find()
+    .countDocuments()
+    .then((numPost) => {
+      totalItems = numPost;
+      return Post.find()
+        .skip((currentPage - 1) * perPage)
+        .limit(perPage);
+    })
     .then((posts) => {
-      res
-        .status(200)
-        .json({ message: "Feched posts successfully", posts: posts });
+      res.status(200).json({
+        message: "Feched posts successfully",
+        posts: posts,
+        totalItems: totalItems,
+      });
     })
     .catch((err) => {
-      if (!err.satatusCode) {
-        err.satatusCode = 500;
+      if (!err.statusCode) {
+        err.statusCode = 500;
       }
       next(err);
     });
@@ -38,18 +49,32 @@ exports.createPost = (req, res, next) => {
   const imageUrl = req.file.path;
   const title = req.body.title;
   const content = req.body.content;
+  let creator;
   const post = new Post({
     title: title,
     content: content,
     imageUrl: imageUrl,
-    creator: { name: "Faiz Khan" },
+    creator: req.userId,
   });
+
   post
     .save()
     .then((result) => {
+      return User.findById(req.userId);
+    })
+    .then((user) => {
+      creator = user;
+      user.posts.push(post);
+      return user.save();
+    })
+    .then((result) => {
       res.status(201).json({
         message: "Post created successfully!",
-        post: result,
+        post: post,
+        creator: {
+          _id: creator._id,
+          name: creator.name,
+        },
       });
     })
     .catch((err) => {
@@ -106,6 +131,12 @@ exports.updatePost = (req, res, next) => {
         clearImage(post.imageUrl);
       }
 
+      if (post.creator.toString() !== req.userId) {
+        const error = new Error("Not authorized.");
+        error.statusCode = 403;
+        throw error;
+      }
+
       post.title = title;
       post.content = content;
       post.imageUrl = imageUrl;
@@ -132,11 +163,23 @@ exports.deletePost = (req, res, next) => {
         error.satatusCode = 404;
         throw error;
       }
+      if (post.creator.toString() !== req.userId) {
+        const error = new Error("Not authorized.");
+        error.statusCode = 403;
+        throw error;
+      }
+
       clearImage(post.imageUrl);
       return Post.findByIdAndDelete({ _id: postId });
     })
     .then((result) => {
-      console.log(result);
+      return User.findById(req.userId)
+    })
+    .then(user => {
+      user.posts.pull(postId)
+      return user.save()
+    })
+    .then(result => {
       res.status(200).json({ message: "Deleted Post." });
     })
     .catch((err) => {
